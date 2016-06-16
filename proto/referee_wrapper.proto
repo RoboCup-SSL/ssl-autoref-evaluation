@@ -1,0 +1,6 @@
+import "referee.proto";
+
+message SSL_RefereeWrapper {
+  required int32 port_number = 1;
+  required SSL_Referee referee = 2;
+}

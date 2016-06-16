@@ -1,0 +1,7 @@
+import "messages_robocup_ssl_wrapper.proto";
+import "referee_wrapper.proto";
+
+message SSL_LogWrapperPacket {
+  optional SSL_WrapperPacket vision_wrapper = 1;
+  optional SSL_RefereeWrapper referee_wrapper = 2;
+}
