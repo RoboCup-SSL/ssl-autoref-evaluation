@@ -11,13 +11,15 @@ INCLUDE_DIRECTORIES(${PROJECT_BINARY_DIR})
 FILE(GLOB ProtoFiles "proto/*.proto")
 PROTOBUF_GENERATE_CPP(ProtoSource ProtoHeaders ${ProtoFiles})
 
+SET(libs pthread)
+
+INCLUDE_DIRECTORIES(${PROJECT_BINARY_DIR})
+INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR})
+INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src)
+
 ADD_LIBRARY(protobuf_all ${ProtoSource})
 TARGET_LINK_LIBRARIES(protobuf_all ${PROTOBUF_LIBRARIES})
 
-SET(target server)
-ADD_EXECUTABLE(${target} src/server_main.cpp)
-TARGET_LINK_LIBRARIES(${target} protobuf_all)
-
-SET(target client)
-ADD_EXECUTABLE(${target} src/client_main.cpp)
-TARGET_LINK_LIBRARIES(${target} protobuf_all)
+SET(target logger)
+ADD_EXECUTABLE(${target} src/logger_main.cpp src/shared/netraw.cpp)
+TARGET_LINK_LIBRARIES(${target} protobuf_all ${libs})
