@@ -20,6 +20,10 @@ INCLUDE_DIRECTORIES(${PROJECT_SOURCE_DIR}/src)
 ADD_LIBRARY(protobuf_all ${ProtoSource})
 TARGET_LINK_LIBRARIES(protobuf_all ${PROTOBUF_LIBRARIES})
 
+ADD_LIBRARY(shared_lib
+            src/shared/netraw.cpp
+            src/shared/pthread_utils.cpp)
+
 SET(target logger)
-ADD_EXECUTABLE(${target} src/logger_main.cpp src/shared/netraw.cpp)
-TARGET_LINK_LIBRARIES(${target} protobuf_all ${libs})
+ADD_EXECUTABLE(${target} src/logger_main.cpp)
+TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
