@@ -34,6 +34,7 @@
 
 #include "shared/netraw.h"
 #include "shared/pthread_utils.h"
+#include "udp_message_wrapper.pb.h"
 
 using std::string;
 using std::vector;
@@ -42,7 +43,7 @@ using std::vector;
 static const int kMaxDatagramSize = 65536;
 
 // UDP Multicast address for referees.
-static const char* kRefereeMulticast = "224.5.23.2";
+static const char* kRefereeMulticast = "224.5.23.1";
 
 // UDP Multicast address for SSL Vision.
 static const char* kVisionMulticast = "224.5.23.2";
@@ -51,7 +52,7 @@ static const char* kVisionMulticast = "224.5.23.2";
 static const int kVisionPort = 10006;
 
 // Port number for main refbox.
-static const int kRefboxPort = 10002;
+static const int kRefboxPort = 10003;
 
 // Flag to handle graceful shutdown of multiple threads on SIGINT.
 bool run_ = true;
@@ -95,6 +96,7 @@ class ProtobufLogger {
 
  private:
   static void* LoggerThread(void* logger_ptr) {
+    static const bool kDebug = false;
     ProtobufLogger &logger =
         *(reinterpret_cast<ProtobufLogger*>(logger_ptr));
     // Initialize network multicast client.
@@ -124,35 +126,36 @@ class ProtobufLogger {
 
     // Start receive loop.
     Net::Address src;
-    char* buffer = new char[kMaxDatagramSize];
+    char* receive_buffer = new char[kMaxDatagramSize];
+    string write_buffer;
+    UDPMessageWrapper message_wrapper;
+    message_wrapper.set_address(logger.ip_address_);
+    message_wrapper.set_port(logger.port_number_);
     while (run_) {
-      const int bytes_received = client.recv(buffer, kMaxDatagramSize, src);
+      const int bytes_received =
+          client.recv(receive_buffer, kMaxDatagramSize, src);
       if (bytes_received>0) {
-        const uint64_t timestamp = GetTimeUSec();
+        if (kDebug) {
+          printf("Received %d bytes from %s:%d\n",
+                bytes_received,
+                logger.ip_address_.c_str(),
+                logger.port_number_);
+        }
+        message_wrapper.set_timestamp(GetTimeUSec());
+        message_wrapper.set_data(receive_buffer, bytes_received);
+        message_wrapper.SerializeToString(&write_buffer);
         // Log data.
         ScopedLock lock(logging_mutex_);
-        // TODO(joydeepb): Handle byte-order in file I/O to be agnostic of
-        // machine type.
-
-        // Write port number, which implicitly also encodes type: Vision
-        // messages are received on port 10006, refbox on 10002, autorefs on
-        // any other port.
-        fwrite(&(logger.port_number_),
-               sizeof(logger.port_number_),
-               1,
-               log_file_);
-
-        // Write timestamp.
-        fwrite(&timestamp, sizeof(timestamp), 1, log_file_);
 
         // Write size of packet.
-        fwrite(&bytes_received, sizeof(bytes_received), 1, log_file_);
+        const uint32_t packet_size = write_buffer.size();
+        fwrite(&packet_size, sizeof(packet_size), 1, log_file_);
 
         // Write packet payload.
-        fwrite(buffer, 1, bytes_received, log_file_);
+        fwrite(write_buffer.data(), 1, packet_size, log_file_);
       }
     }
-    delete buffer;
+    delete receive_buffer;
     return NULL;
   }
 
@@ -175,9 +178,16 @@ void SigIntHandler(int) {
   fflush(stdout);
 }
 
+void PrintUsage() {
+  printf("Usage: logger [port for autoref1] [port for autoref2] ...\n");
+}
+
 int main(int argc, char *argv[]) {
-  if (argc > 1 && (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0)) {
-    printf("Usage: logger [port for autoref1] [port for autoref2] ...\n");
+  if (argc < 2) {
+    PrintUsage();
+    printf("No autorefs listed, logging only SSL-Vision and refbox.\n");
+  } else if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "-?") == 0) {
+    PrintUsage();
     return 0;
   }
 
@@ -185,10 +195,11 @@ int main(int argc, char *argv[]) {
 
   // Initialize clients, log file.
   log_file_ = fopen("game_log.log", "w");
-  ProtobufLogger vision_logger(kVisionMulticast, kVisionPort);
 
   const int num_autorefs = argc - 1;
   vector<ProtobufLogger*> loggers;
+  // Create logger for SSL Vision.
+  loggers.push_back(new ProtobufLogger(kVisionMulticast, kVisionPort));
   // Create logger for main refbox.
   loggers.push_back(new ProtobufLogger(kRefereeMulticast, kRefboxPort));
 
@@ -206,6 +217,9 @@ int main(int argc, char *argv[]) {
   }
 
   // Close and quit.
-
+  for (int i = 0; i < loggers.size(); ++i) {
+    delete loggers[i];
+    loggers[i] = NULL;
+  }
   return 0;
 }

@@ -27,3 +27,7 @@ ADD_LIBRARY(shared_lib
 SET(target logger)
 ADD_EXECUTABLE(${target} src/logger_main.cpp)
 TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
+
+SET(target playback)
+ADD_EXECUTABLE(${target} src/playback_main.cpp)
+TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
