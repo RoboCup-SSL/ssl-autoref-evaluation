@@ -103,6 +103,8 @@ void PlayLogFile(const string& log_file) {
   uint64_t t_last_publish = 0;
   uint64_t t_last_log = 0;
   while (ReadUDPMessageWrapper(fid(), &message)) {
+    printf("\r%f ", 1e-6 * static_cast<double>(message.timestamp()));
+    fflush(stdout);
     if (kDebug) {
       printf("Publishing %d bytes to %s:%d\n",
              static_cast<int>(message.data().size()),
@@ -121,6 +123,7 @@ void PlayLogFile(const string& log_file) {
     t_last_publish = GetTimeUSec();
     t_last_log = message.timestamp();
   }
+  printf("\n");
 }
 
 void PrintUsage() {

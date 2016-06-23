@@ -221,5 +221,7 @@ int main(int argc, char *argv[]) {
     delete loggers[i];
     loggers[i] = NULL;
   }
+
+  fclose(log_file_);
   return 0;
 }

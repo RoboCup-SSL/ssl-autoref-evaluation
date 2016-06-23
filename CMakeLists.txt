@@ -31,3 +31,8 @@ TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
 SET(target playback)
 ADD_EXECUTABLE(${target} src/playback_main.cpp)
 TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
+
+
+SET(target evaluate)
+ADD_EXECUTABLE(${target} src/evaluate_main.cpp)
+TARGET_LINK_LIBRARIES(${target} protobuf_all shared_lib ${libs})
