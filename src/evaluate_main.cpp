@@ -57,9 +57,11 @@ struct RefereeEvent {
 
   RefereeEvent(uint64_t stop_timestamp,
                uint64_t command_timestamp,
+               uint32_t command_counter,
                SSL_Referee_Command command) :
       stop_timestamp(stop_timestamp),
       command_timestamp(command_timestamp),
+      command_counter(command_counter),
       command(command) {}
 
   // Timestamp that the "STOP" command was sent, previous to the event command.
@@ -67,6 +69,9 @@ struct RefereeEvent {
 
   // Timestamp that the command was sent.
   uint64_t command_timestamp;
+
+  // Value of the command counter when this command was received.
+  uint32_t command_counter;
 
   // Command for the event.
   SSL_Referee_Command command;
@@ -198,6 +203,7 @@ void IndexRefereeEvents() {
           referee_events[i].push_back(
               RefereeEvent(t_last_stop,
                            command.command_timestamp(),
+                           command.command_counter(),
                            command.command()));
           t_last_stop = 0;
         } break;
@@ -213,12 +219,101 @@ void IndexRefereeEvents() {
   }
 }
 
+// Returns true iff event e1 does not overlap with event e2, and the events do
+// not overlap, allowing for time delay "td" before event e2.
+bool Before(const RefereeEvent& e1, const RefereeEvent& e2, uint64_t td) {
+  return (e1.command_timestamp < (e2.stop_timestamp -td));
+}
+
+// Returns true iff the events e1 and e2 overlap in time, allowing for time
+// delay "td" before event e1.
+bool Overlaps(const RefereeEvent& e1, const RefereeEvent& e2, uint64_t td) {
+  return (!Before(e1, e2, 0) && !Before(e2, e1, td));
+}
+
 void EvaluateAutorefs(const string& log_file) {
   printf("Evaluating log file %s\n", log_file.c_str());
   LoadRefereeCommands(log_file);
   IndexRefereeEvents();
 
+  // TODO: Try and load the results from possible human corrections.
+
   // Evaluate the autoref events.
+  const vector<RefereeEvent>& human_referee = referee_events[0];
+  if (human_referee.size() == 0) {
+    fprintf(stderr, "ERROR: No human referee events found!\n");
+    exit(1);
+  }
+
+  // The maximum time delay between an autoref event, and a human referee event
+  // after the autoref event.
+  static const uint64_t kAutoToHumanDelay = 2000000;
+  // The maximum time delay between a human referee event, and an autoref event
+  // after the human referee event.
+  static const uint64_t kHumanToAutoDelay = 0;
+
+  for (int i = 1; i < referee_events.size(); ++i) {
+    const vector<RefereeEvent>& autoref = referee_events[i];
+    int k = 0;
+    int true_positives = 0;
+    int false_positives = 0;
+    int false_negatives = 0;
+    for (int j = 0; j < autoref.size(); ++i) {
+      // Indicates if a matching human referee command has been found.
+      bool match_found = false;
+      // Indicates if the autoref event has been evaluated.
+      bool evaluated = false;
+      do {
+        if (Before(human_referee[k], autoref[j], kHumanToAutoDelay)) {
+          // False negative: The autoref missed a human referee event
+          ++false_negatives;
+        } else if (Before(autoref[j], human_referee[k], kAutoToHumanDelay)) {
+          // False Positive: No human event overlapped in time with the autoref.
+          ++false_positives;
+          evaluated = true;
+        } else {
+          // Overlapping in time.
+          match_found = (human_referee[k].command == autoref[j].command);
+        }
+        // If no match found, check the next human referee event.
+        if (!match_found) ++k;
+      } while (!match_found && !evaluated && k < human_referee.size());
+      if (match_found) {
+        // True positive
+        ++true_positives;
+        // Advance to the next human referee event, since one human referee
+        // event may only match one automatic referee event.
+        ++k;
+      } else if (!evaluated) {
+        // False positive. There are no more human referee events left.
+        ++false_positives;
+      }
+    }
+    const float precision =
+        static_cast<float>(true_positives) /
+        (static_cast<float>(true_positives) +
+        static_cast<float>(false_positives));
+    const float recall =
+        static_cast<float>(true_positives) /
+        (static_cast<float>(true_positives) +
+        static_cast<float>(false_negatives));
+    const float f1_score = 2.0 * precision * recall / (precision + recall);
+    printf("Autoref %d:\n"
+           "True Positives: %d\n"
+           "False Positives: %d\n"
+           "False Negatives: %d\n"
+           "Precision: %.3f\n"
+           "Recall: %.3f\n"
+           "F1 Score: %.3f\n",
+           referee_ports[i],
+           true_positives,
+           false_positives,
+           false_negatives,
+           precision,
+           recall,
+           f1_score);
+    // TODO: Save the results for possible human correction.
+  }
 }
 
 void PrintUsage() {
