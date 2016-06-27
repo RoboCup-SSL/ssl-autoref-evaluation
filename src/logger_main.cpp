@@ -66,6 +66,9 @@ FILE* log_file_ = NULL;
 // Get timestamp as reported by gettimeofday, in number of microseconds
 uint64_t GetTimeUSec();
 
+// Verbose mode: print referee events as they are logged.
+bool verbose = false;
+
 // Class to asynchronously list to messges from protobuf encoded UDP packets,
 // and synchronously log them to a combined log file.
 class ProtobufLogger {
@@ -77,6 +80,7 @@ class ProtobufLogger {
   // Main constructor, that accepts a UDP address and port number to listen on.
   explicit ProtobufLogger(const std::string&ip_address, int port_number) :
       ip_address_(ip_address), port_number_(port_number) {
+    printf("Logging from %s:%d\n", ip_address_.c_str(), port_number_);
     pthread_create(&logger_thread_,
                    NULL,
                    ProtobufLogger::LoggerThread,
@@ -135,7 +139,7 @@ class ProtobufLogger {
       const int bytes_received =
           client.recv(receive_buffer, kMaxDatagramSize, src);
       if (bytes_received>0) {
-        if (kDebug) {
+        if (verbose || kDebug) {
           printf("Received %d bytes from %s:%d\n",
                 bytes_received,
                 logger.ip_address_.c_str(),
@@ -179,7 +183,23 @@ void SigIntHandler(int) {
 }
 
 void PrintUsage() {
-  printf("Usage: logger [port for autoref1] [port for autoref2] ...\n");
+  printf("Usage: logger [-v] [port for autoref1] [port for autoref2] ...\n");
+}
+
+string GetFileName() {
+  char date_string[256];
+  char file_name[256];
+  // Current time in timezone-independent format.
+  time_t time_now = time(NULL);
+  // Milliseconds elapsed since the last second.
+  const int milliseconds = ((GetTimeUSec() / 1000) % 1000);
+  // Current time in local timezone.
+  tm* local_time = localtime(&time_now);
+  // Convert time to formatted date-time string.
+  strftime(date_string, sizeof(date_string), "%Y-%m-%d-%H-%M-%S", local_time);
+  // Complete filename will be in the form "YYYY-MM-DD-SS-[ms].log"
+  sprintf(file_name, "%s-%03d.log", date_string, milliseconds);
+  return (string(file_name));
 }
 
 int main(int argc, char *argv[]) {
@@ -190,13 +210,13 @@ int main(int argc, char *argv[]) {
     PrintUsage();
     return 0;
   }
-
   signal(SIGINT, SigIntHandler);
 
   // Initialize clients, log file.
-  log_file_ = fopen("game_log.log", "w");
+  const string file_name = GetFileName();
+  printf("Logging to %s\n", file_name.c_str());
+  log_file_ = fopen(file_name.c_str(), "w");
 
-  const int num_autorefs = argc - 1;
   vector<ProtobufLogger*> loggers;
   // Create logger for SSL Vision.
   loggers.push_back(new ProtobufLogger(kVisionMulticast, kVisionPort));
@@ -204,10 +224,15 @@ int main(int argc, char *argv[]) {
   loggers.push_back(new ProtobufLogger(kRefereeMulticast, kRefboxPort));
 
   // Create loggers for all specified additional referee sources.
-  for (int i = 0; i < num_autorefs; ++i) {
-    const int port_number = atoi(argv[i + 1]);
+  for (int i = 1; i < argc; ++i) {
+    if (strcmp(argv[i], "-v") == 0) {
+      printf("Verbose mode\n");
+      verbose = true;
+      continue;
+    }
+    const int port_number = atoi(argv[i]);
     loggers.push_back(new ProtobufLogger(kRefereeMulticast, port_number));
-    printf("Logging referee %s:%d\n", kRefereeMulticast, port_number);
+    // printf("Logging autoref %s:%d\n", kRefereeMulticast, port_number);
   }
 
   // Initialize autoref clients
