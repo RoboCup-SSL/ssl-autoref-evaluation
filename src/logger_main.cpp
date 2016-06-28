@@ -174,7 +174,7 @@ void SigIntHandler(int) {
 }
 
 void PrintUsage() {
-  printf("Usage: logger [-v] [port for autoref1] [port for autoref2] ...\n");
+  printf("Usage: logger [-v] [address1:port1] [address2:port2] ...\n");
 }
 
 string GetFileName() {
@@ -191,6 +191,15 @@ string GetFileName() {
   // Complete filename will be in the form "YYYY-MM-DD-SS-[ms].log"
   sprintf(file_name, "%s-%03d.log", date_string, milliseconds);
   return (string(file_name));
+}
+
+bool ParseAddressAndPort(const char* arg, string* address, int* port) {
+  const int arg_len = strlen(arg);
+  const char* split = strstr(arg, ":");
+  if (arg_len == 0 || split == NULL || split + 1 == arg + arg_len) return false;
+  *port = atoi(split + 1);
+  address->assign(arg, split - arg);
+  return true;
 }
 
 int main(int argc, char *argv[]) {
@@ -221,8 +230,14 @@ int main(int argc, char *argv[]) {
       verbose = true;
       continue;
     }
-    const int port_number = atoi(argv[i]);
-    loggers.push_back(new ProtobufLogger(kRefereeMulticast, port_number));
+
+    int port_number = 0;
+    string address;
+    if (ParseAddressAndPort(argv[i], &address, &port_number)) {
+      loggers.push_back(new ProtobufLogger(address, port_number));
+    }
+    // const int port_number = atoi(argv[i]);
+    // loggers.push_back(new ProtobufLogger(kRefereeMulticast, port_number));
     // printf("Logging autoref %s:%d\n", kRefereeMulticast, port_number);
   }
 
