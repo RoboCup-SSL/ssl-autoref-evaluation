@@ -25,6 +25,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <algorithm>
 #include <string>
 
@@ -546,69 +547,6 @@ inline void mzero(data *d,int n)
 {
   memset(d,0,sizeof(data)*n);
 }
-
-// A simple class wrapper for a file handle that automatically closes the file
-// when the instance of the class is destroyed.
-class ScopedFile {
-  static const bool kDebug = false;
- public:
-  // Constructor that inherits ownership of a previously opened file.
-  explicit ScopedFile(FILE* fid) : fid_(fid) {}
-
-  // Constructor that opens the specified file in the specified mode.
-  ScopedFile(const std::string& file_name,
-             const char* mode,
-             bool print_error = false) :
-      fid_(NULL) {
-    Open(file_name, mode, print_error);
-  }
-
-  // Destructor.
-  ~ScopedFile() {
-    if (fid_ == NULL) return;
-    const bool error = (fclose(fid_) != 0);
-    if (kDebug) {
-      printf("fclose success:%d\n", error);
-      if (error) perror("Error closing file descriptor");
-    }
-  }
-
-  // Open a file explicitly.
-  void Open(const std::string& file_name,
-            const char* mode,
-            bool print_error = false) {
-    if (fid_) fclose(fid_);
-    fid_ = fopen(file_name.c_str(), mode);
-    if (fid_ == NULL) {
-      if (print_error) {
-        const std::string error_string = "Error opening \"" + file_name + "\"";
-        perror(error_string.c_str());
-      }
-    } else if (kDebug){
-      printf("fopen: 0x%08X\n", fileno(fid_));
-    }
-  }
-
-  // Getter for the underlying file handle.
-  FILE* operator()() { return (fid_); }
-
-  // Conversion operator to convert to FILE* type.
-  operator FILE*&() { return (fid_); }
-
- private:
-  // Disable the default constructor.
-  ScopedFile();
-
-  // Disable the copy constructor.
-  ScopedFile(const ScopedFile& other);
-
-  // Disable the assignment operator.
-  const ScopedFile& operator=(const ScopedFile& other);
-
-private:
-  // The file handle owned by this instance.
-  FILE* fid_;
-};
 
 #if __GNUC__ >= 3
 # define likely(x) __builtin_expect(!!(x),1)

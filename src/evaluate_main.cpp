@@ -19,6 +19,7 @@
 // Evaluation of automatic referees by comparison to human referee.
 
 #include <arpa/inet.h>
+#include <inttypes.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <stdio.h>
@@ -35,6 +36,7 @@
 
 #include "messages_robocup_ssl_wrapper.pb.h"
 #include "referee.pb.h"
+#include "shared/misc_util.h"
 #include "shared/netraw.h"
 #include "shared/util.h"
 #include "udp_message_wrapper.pb.h"
@@ -53,7 +55,11 @@ using std::vector;
   // GOAL_YELLOW
   // GOAL_BLUE
 struct RefereeEvent {
-  RefereeEvent() {}
+  RefereeEvent() :
+      stop_timestamp(0),
+      command_timestamp(0),
+      command_counter(0),
+      command(SSL_Referee_Command_HALT) {}
 
   RefereeEvent(uint64_t stop_timestamp,
                uint64_t command_timestamp,
@@ -76,6 +82,75 @@ struct RefereeEvent {
   // Command for the event.
   SSL_Referee_Command command;
 };
+
+// Struct to represent the evaluation of a single referee event.
+struct EventEvaluation {
+  enum Evaluation {
+    kUnknown = 0,
+    kTruePositive = 1,
+    kFalsePositive = 2,
+    kFalseNegative = 3
+  };
+
+  EventEvaluation() : value(kUnknown), ignore(true) {}
+
+  EventEvaluation(Evaluation value,
+                  const RefereeEvent& autoref_event,
+                  const RefereeEvent& humanref_event,
+                  bool ignore) :
+      value(kUnknown),
+      autoref_event(autoref_event),
+      humanref_event(humanref_event),
+      ignore(ignore) {}
+
+  const char* ValueString() const {
+    switch (value) {
+      case kTruePositive : {
+        return "TP";
+      } break;
+
+      case kFalsePositive : {
+        return "FP";
+      } break;
+
+      case kFalseNegative : {
+        return "FN";
+      } break;
+
+      default: {
+        return "UN";
+      }
+    }
+  }
+
+  // The evaluation of this event.
+  Evaluation value;
+
+  // The autoref event corresponding to this evaluation. Valid for True
+  // Positives and False Positives.
+  RefereeEvent autoref_event;
+
+  // The human referee event corresponding to this evaluation. Valid for True
+  // Positives and False Negatives.
+  RefereeEvent humanref_event;
+
+  // Human-annotated flag to indicate that the evaluator should not count
+  // this event.
+  bool ignore;
+};
+
+bool operator!=(const RefereeEvent& e1, const RefereeEvent& e2) {
+  return (e1.stop_timestamp != e2.stop_timestamp ||
+      e1.command_timestamp != e2.command_timestamp ||
+      e1.command_counter != e2.command_counter ||
+      e1.command != e2.command);
+}
+
+bool operator!=(const EventEvaluation& e1, const EventEvaluation& e2) {
+  return (e1.value != e2.value ||
+      e1.autoref_event != e2.autoref_event ||
+      e1.humanref_event != e2.humanref_event);
+}
 
 // UDP Multicast address for referees.
 static const char* kRefereeMulticast = "224.5.23.1";
@@ -231,12 +306,154 @@ bool Overlaps(const RefereeEvent& e1, const RefereeEvent& e2, uint64_t td) {
   return (!Before(e1, e2, 0) && !Before(e2, e1, td));
 }
 
+bool LoadEvaluations(const string& evaluations_file,
+                     vector<EventEvaluation>* evaluations_ptr) {
+  vector<EventEvaluation>& evaluations = *evaluations_ptr;
+  ScopedFile fid(evaluations_file, "r");
+  for (int i = 0; i < evaluations.size(); ++i) {
+    EventEvaluation eval;
+    int j = 0;
+    char value_string[32];
+    int ignore_int = 0;
+    int autoref_command_int = 0;
+    int humanref_command_int = 0;
+    const int num_read = 
+        fscanf(fid,
+               "%3d %2s %d "
+               "%"PRIu64" %"PRIu64" %"PRIu32" %d "
+               "%"PRIu64" %"PRIu64" %"PRIu32" %d\n",
+               &i,
+               value_string,
+               &ignore_int,
+               &(eval.autoref_event.stop_timestamp),
+               &(eval.autoref_event.command_timestamp),
+               &(eval.autoref_event.command_counter),
+               &(autoref_command_int),
+               &(eval.humanref_event.stop_timestamp),
+               &(eval.humanref_event.command_timestamp),
+               &(eval.humanref_event.command_counter),
+               &(humanref_command_int));
+    if (num_read != 11) return false;
+    if (strcmp(value_string, "TP") == 0) {
+      eval.value = EventEvaluation::kTruePositive;
+    } else if (strcmp(value_string, "FP") == 0) {
+      eval.value = EventEvaluation::kFalsePositive;
+    } else if (strcmp(value_string, "FN") == 0) {
+      eval.value = EventEvaluation::kFalseNegative;
+    }
+    if (ignore_int == 0) {
+      eval.ignore = false;
+    } else {
+      eval.ignore = true;
+    }
+    eval.autoref_event.command =
+        static_cast<SSL_Referee_Command>(autoref_command_int);
+    eval.humanref_event.command =
+        static_cast<SSL_Referee_Command>(humanref_command_int);
+    if (eval != evaluations[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void SaveEvaluations(const string& evaluations_file,
+                     const vector<EventEvaluation>& evaluations) {
+  ScopedFile fid(evaluations_file, "w");
+  for (int i = 0; i < evaluations.size(); ++i) {
+    const EventEvaluation& eval = evaluations[i];
+    fprintf(fid,
+            "%3d %2s %d "
+            "%"PRIu64" %"PRIu64" %"PRIu32" %d "
+            "%"PRIu64" %"PRIu64" %"PRIu32" %d\n",
+            i,
+            eval.ValueString(),
+            (eval.ignore ? 1 : 0),
+            eval.autoref_event.stop_timestamp,
+            eval.autoref_event.command_timestamp,
+            eval.autoref_event.command_counter,
+            eval.autoref_event.command,
+            eval.humanref_event.stop_timestamp,
+            eval.humanref_event.command_timestamp,
+            eval.humanref_event.command_counter,
+            eval.humanref_event.command);
+  }
+}
+
+void MergeEvaluations(const string& log_file,
+                      int ref_id,
+                      vector<EventEvaluation>* evaluations_ptr) {
+  vector<EventEvaluation>& evaluations = *evaluations_ptr;
+  int true_positives = 0;
+  int false_positives = 0;
+  int false_negatives = 0;
+
+  // TODO: Try and load the results from possible human corrections.
+  const string evaluations_file_name =
+      StringPrintf("%s.%d.eval", log_file.c_str(), ref_id);
+  if (FileExists(evaluations_file_name) &&
+      LoadEvaluations(evaluations_file_name, evaluations_ptr)) {
+    // Human-annotated evaluations exist, and are consistent. Use them instead.
+    printf("Succesfully loaded previous annotated evaluation %s\n",
+           evaluations_file_name.c_str());
+  } else {
+    // Save the evaluations.
+    SaveEvaluations(evaluations_file_name, evaluations);
+  }
+  for (int i = 0; i < evaluations.size(); ++i) {
+    if (evaluations[i].ignore) continue;
+    switch (evaluations[i].value) {
+      case EventEvaluation::kTruePositive: {
+        ++true_positives;
+      } break;
+      case EventEvaluation::kFalsePositive: {
+        ++false_positives;
+      } break;
+      case EventEvaluation::kFalseNegative: {
+        ++false_negatives;
+      } break;
+      default: {
+        // Should never happen.
+        fprintf(stderr,
+                "ERROR: Unknown evaluation %d for referee %d, command %d\n",
+                evaluations[i].value,
+                ref_id,
+                i);
+        exit(1);
+      }
+    }
+  }
+  const float precision =
+      static_cast<float>(true_positives) /
+      (static_cast<float>(true_positives) +
+      static_cast<float>(false_positives));
+  const float recall =
+      static_cast<float>(true_positives) /
+      (static_cast<float>(true_positives) +
+      static_cast<float>(false_negatives));
+  const float f1_score = 2.0 * precision * recall / (precision + recall);
+
+  printf("Autoref %d:\n"
+          "True Positives: %d\n"
+          "False Positives: %d\n"
+          "False Negatives: %d\n"
+          "Precision: %.3f\n"
+          "Recall: %.3f\n"
+          "F1 Score: %.3f\n",
+          referee_ports[ref_id],
+          true_positives,
+          false_positives,
+          false_negatives,
+          precision,
+          recall,
+          f1_score);
+}
+
 void EvaluateAutorefs(const string& log_file) {
   printf("Evaluating log file %s\n", log_file.c_str());
   LoadRefereeCommands(log_file);
   IndexRefereeEvents();
 
-  // TODO: Try and load the results from possible human corrections.
 
   // Evaluate the autoref events.
   const vector<RefereeEvent>& human_referee = referee_events[0];
@@ -255,10 +472,8 @@ void EvaluateAutorefs(const string& log_file) {
   for (int i = 1; i < referee_events.size(); ++i) {
     const vector<RefereeEvent>& autoref = referee_events[i];
     int k = 0;
-    int true_positives = 0;
-    int false_positives = 0;
-    int false_negatives = 0;
-    for (int j = 0; j < autoref.size(); ++i) {
+    vector <EventEvaluation> evaluations;
+    for (int j = 0; j < autoref.size(); ++j) {
       // Indicates if a matching human referee command has been found.
       bool match_found = false;
       // Indicates if the autoref event has been evaluated.
@@ -266,10 +481,18 @@ void EvaluateAutorefs(const string& log_file) {
       do {
         if (Before(human_referee[k], autoref[j], kHumanToAutoDelay)) {
           // False negative: The autoref missed a human referee event
-          ++false_negatives;
+          evaluations.push_back(EventEvaluation(
+              EventEvaluation::kFalseNegative,
+              RefereeEvent(),
+              human_referee[k],
+              false));
         } else if (Before(autoref[j], human_referee[k], kAutoToHumanDelay)) {
           // False Positive: No human event overlapped in time with the autoref.
-          ++false_positives;
+          evaluations.push_back(EventEvaluation(
+              EventEvaluation::kFalsePositive,
+              autoref[j],
+              RefereeEvent(),
+              false));
           evaluated = true;
         } else {
           // Overlapping in time.
@@ -280,39 +503,25 @@ void EvaluateAutorefs(const string& log_file) {
       } while (!match_found && !evaluated && k < human_referee.size());
       if (match_found) {
         // True positive
-        ++true_positives;
+        evaluations.push_back(EventEvaluation(
+              EventEvaluation::kTruePositive,
+              autoref[j],
+              human_referee[k],
+              false));
         // Advance to the next human referee event, since one human referee
         // event may only match one automatic referee event.
         ++k;
       } else if (!evaluated) {
         // False positive. There are no more human referee events left.
-        ++false_positives;
+        evaluations.push_back(EventEvaluation(
+              EventEvaluation::kFalsePositive,
+              autoref[j],
+              RefereeEvent(),
+              false));
       }
     }
-    const float precision =
-        static_cast<float>(true_positives) /
-        (static_cast<float>(true_positives) +
-        static_cast<float>(false_positives));
-    const float recall =
-        static_cast<float>(true_positives) /
-        (static_cast<float>(true_positives) +
-        static_cast<float>(false_negatives));
-    const float f1_score = 2.0 * precision * recall / (precision + recall);
-    printf("Autoref %d:\n"
-           "True Positives: %d\n"
-           "False Positives: %d\n"
-           "False Negatives: %d\n"
-           "Precision: %.3f\n"
-           "Recall: %.3f\n"
-           "F1 Score: %.3f\n",
-           referee_ports[i],
-           true_positives,
-           false_positives,
-           false_negatives,
-           precision,
-           recall,
-           f1_score);
-    // TODO: Save the results for possible human correction.
+    // Merge evaluations with possible human correction.
+    MergeEvaluations(log_file, i, &evaluations);
   }
 }
 

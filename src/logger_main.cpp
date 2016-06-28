@@ -33,7 +33,9 @@
 #include <vector>
 
 #include "shared/netraw.h"
+#include "shared/misc_util.h"
 #include "shared/pthread_utils.h"
+#include "shared/util.h"
 #include "udp_message_wrapper.pb.h"
 
 using std::string;
@@ -62,9 +64,6 @@ pthread_mutex_t logging_mutex_ = PTHREAD_MUTEX_INITIALIZER;
 
 // Handle to log file.
 FILE* log_file_ = NULL;
-
-// Get timestamp as reported by gettimeofday, in number of microseconds
-uint64_t GetTimeUSec();
 
 // Verbose mode: print referee events as they are logged.
 bool verbose = false;
@@ -167,14 +166,6 @@ class ProtobufLogger {
   const std::string ip_address_;
   const int port_number_;
 };
-
-uint64_t GetTimeUSec() {
-  timespec time;
-  clock_gettime(CLOCK_REALTIME, &time);
-  const uint64_t seconds = time.tv_sec;
-  const uint64_t useconds = time.tv_nsec / 1000;
-  return (seconds * 1000000 + useconds);
-}
 
 void SigIntHandler(int) {
   run_ = false;

@@ -25,13 +25,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <time.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <string>
 #include <vector>
 
+#include "shared/misc_util.h"
 #include "shared/netraw.h"
 #include "shared/util.h"
 #include "udp_message_wrapper.pb.h"
@@ -76,14 +76,6 @@ void PublishMessage(const UDPMessageWrapper& message) {
             message.port(),
             message_data.size());
   }
-}
-
-uint64_t GetTimeUSec() {
-  timespec time;
-  clock_gettime(CLOCK_REALTIME, &time);
-  const uint64_t seconds = time.tv_sec;
-  const uint64_t useconds = time.tv_nsec / 1000;
-  return (seconds * 1000000 + useconds);
 }
 
 void PlayLogFile(const string& log_file) {

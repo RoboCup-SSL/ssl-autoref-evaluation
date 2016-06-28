@@ -21,6 +21,7 @@ ADD_LIBRARY(protobuf_all ${ProtoSource})
 TARGET_LINK_LIBRARIES(protobuf_all ${PROTOBUF_LIBRARIES})
 
 ADD_LIBRARY(shared_lib
+            src/shared/misc_util.cpp
             src/shared/netraw.cpp
             src/shared/pthread_utils.cpp)
 
